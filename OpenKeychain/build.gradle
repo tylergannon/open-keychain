@@ -2,7 +2,9 @@ apply plugin: 'com.android.application'
 apply plugin: 'witness'
 
 dependencies {
+
     // NOTE: Always use fixed version codes not dynamic ones, e.g. 0.7.3 instead of 0.7.+, see README for more information
+
     // NOTE: libraries are pinned to a specific build, see below
 
     // from local Android SDK
@@ -10,7 +12,6 @@ dependencies {
     compile 'com.android.support:appcompat-v7:22.0.0'
     compile 'com.android.support:recyclerview-v7:22.0.0'
     compile 'com.android.support:cardview-v7:22.0.0'
-
     // JCenter etc.
     compile 'com.eftimoff:android-patternview:1.0.1@aar'
     compile 'com.journeyapps:zxing-android-embedded:2.1.0@aar'
@@ -20,7 +21,7 @@ dependencies {
     compile 'it.neokree:MaterialNavigationDrawer:1.3.2'
     compile 'com.getbase:floatingactionbutton:1.9.0'
     compile 'org.commonjava.googlecode.markdown4j:markdown4j:2.2-cj-1.0'
-
+    compile 'com.tonicartos:superslim:0.4.8'
     // libs as submodules
     compile project(':extern:openpgp-api-lib')
     compile project(':extern:openkeychain-api-lib')

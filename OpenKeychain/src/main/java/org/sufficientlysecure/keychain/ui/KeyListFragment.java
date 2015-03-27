@@ -25,8 +25,6 @@ import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
-import android.graphics.Color;
-import android.graphics.PorterDuff;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -37,9 +35,10 @@ import android.support.v4.app.LoaderManager;
 import android.support.v4.content.CursorLoader;
 import android.support.v4.content.Loader;
 import android.support.v4.view.MenuItemCompat;
-import android.support.v4.widget.CursorAdapter;
+import android.support.v7.app.ActionBarActivity;
+import android.support.v7.view.ActionMode;
+import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.SearchView;
-import android.view.ActionMode;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -47,15 +46,11 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
-import android.widget.AbsListView.MultiChoiceModeListener;
-import android.widget.AdapterView;
-import android.widget.ImageButton;
-import android.widget.ImageView;
-import android.widget.ListView;
-import android.widget.TextView;
+import android.widget.LinearLayout;
 
 import com.getbase.floatingactionbutton.FloatingActionButton;
 import com.getbase.floatingactionbutton.FloatingActionsMenu;
+import com.tonicartos.superslim.LayoutManager;
 
 import org.sufficientlysecure.keychain.Constants;
 import org.sufficientlysecure.keychain.R;
@@ -64,20 +59,18 @@ import org.sufficientlysecure.keychain.operations.results.ConsolidateResult;
 import org.sufficientlysecure.keychain.operations.results.DeleteResult;
 import org.sufficientlysecure.keychain.operations.results.ImportKeyResult;
 import org.sufficientlysecure.keychain.operations.results.OperationResult;
-import org.sufficientlysecure.keychain.pgp.KeyRing;
 import org.sufficientlysecure.keychain.provider.KeychainContract;
 import org.sufficientlysecure.keychain.provider.KeychainContract.KeyRings;
 import org.sufficientlysecure.keychain.provider.KeychainDatabase;
 import org.sufficientlysecure.keychain.provider.ProviderHelper;
 import org.sufficientlysecure.keychain.service.CloudImportService;
 import org.sufficientlysecure.keychain.service.KeychainIntentService;
-import org.sufficientlysecure.keychain.service.ServiceProgressHandler;
 import org.sufficientlysecure.keychain.service.PassphraseCacheService;
+import org.sufficientlysecure.keychain.service.ServiceProgressHandler;
+import org.sufficientlysecure.keychain.ui.adapter.KeyListAdapter;
 import org.sufficientlysecure.keychain.ui.dialog.DeleteKeyDialogFragment;
 import org.sufficientlysecure.keychain.ui.dialog.ProgressDialogFragment;
-import org.sufficientlysecure.keychain.ui.util.Highlighter;
 import org.sufficientlysecure.keychain.ui.util.KeyFormattingUtils;
-import org.sufficientlysecure.keychain.ui.util.KeyFormattingUtils.State;
 import org.sufficientlysecure.keychain.ui.util.Notify;
 import org.sufficientlysecure.keychain.util.ExportHelper;
 import org.sufficientlysecure.keychain.util.FabContainer;
@@ -86,26 +79,22 @@ import org.sufficientlysecure.keychain.util.Preferences;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
-
-import se.emilsjolander.stickylistheaders.StickyListHeadersAdapter;
-import se.emilsjolander.stickylistheaders.StickyListHeadersListView;
 
 /**
  * Public key list with sticky list headers. It does _not_ extend ListFragment because it uses
  * StickyListHeaders library which does not extend upon ListView.
  */
 public class KeyListFragment extends LoaderFragment
-        implements SearchView.OnQueryTextListener, AdapterView.OnItemClickListener,
-        LoaderManager.LoaderCallbacks<Cursor>, FabContainer {
+        implements SearchView.OnQueryTextListener, KeyListAdapter.OnClickListener,
+        LoaderManager.LoaderCallbacks<Cursor>, FabContainer, ActionMode.Callback {
 
     static final int REQUEST_REPEAT_PASSPHRASE = 1;
     static final int REQUEST_ACTION = 2;
 
     ExportHelper mExportHelper;
 
+    private RecyclerView mRecyclerView;
     private KeyListAdapter mAdapter;
-    private StickyListHeadersListView mStickyList;
 
     // saves the mode object for multiselect, needed for reset at some point
     private ActionMode mActionMode = null;
@@ -134,8 +123,9 @@ public class KeyListFragment extends LoaderFragment
         View root = super.onCreateView(inflater, superContainer, savedInstanceState);
         View view = inflater.inflate(R.layout.key_list_fragment, getContainer());
 
-        mStickyList = (StickyListHeadersListView) view.findViewById(R.id.key_list_list);
-        mStickyList.setOnItemClickListener(this);
+        mRecyclerView = (RecyclerView) view.findViewById(R.id.key_list_recycler);
+        mRecyclerView.setHasFixedSize(true);
+        mRecyclerView.setLayoutManager(new LayoutManager(getActivity()));
 
         mFab = (FloatingActionsMenu) view.findViewById(R.id.fab_main);
 
@@ -180,103 +170,6 @@ public class KeyListFragment extends LoaderFragment
         // show app name instead of "keys" from nav drawer
         getActivity().setTitle(R.string.app_name);
 
-        mStickyList.setOnItemClickListener(this);
-        mStickyList.setAreHeadersSticky(true);
-        mStickyList.setDrawingListUnderStickyHeader(false);
-        mStickyList.setFastScrollEnabled(true);
-
-        // Adds an empty footer view so that the Floating Action Button won't block content
-        // in last few rows.
-        View footer = new View(getActivity());
-
-        int spacing = (int) android.util.TypedValue.applyDimension(
-                android.util.TypedValue.COMPLEX_UNIT_DIP, 72, getResources().getDisplayMetrics()
-        );
-
-        android.widget.AbsListView.LayoutParams params = new android.widget.AbsListView.LayoutParams(
-                android.widget.AbsListView.LayoutParams.MATCH_PARENT,
-                spacing
-        );
-
-        footer.setLayoutParams(params);
-        mStickyList.addFooterView(footer, null, false);
-
-        /*
-         * Multi-selection
-         */
-        mStickyList.setFastScrollAlwaysVisible(true);
-
-        mStickyList.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE_MODAL);
-        mStickyList.getWrappedList().setMultiChoiceModeListener(new MultiChoiceModeListener() {
-
-            @Override
-            public boolean onCreateActionMode(ActionMode mode, Menu menu) {
-                android.view.MenuInflater inflater = getActivity().getMenuInflater();
-                inflater.inflate(R.menu.key_list_multi, menu);
-                mActionMode = mode;
-                return true;
-            }
-
-            @Override
-            public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
-                return false;
-            }
-
-            @Override
-            public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
-
-                // get IDs for checked positions as long array
-                long[] ids;
-
-                switch (item.getItemId()) {
-                    case R.id.menu_key_list_multi_encrypt: {
-                        ids = mAdapter.getCurrentSelectedMasterKeyIds();
-                        encrypt(mode, ids);
-                        break;
-                    }
-                    case R.id.menu_key_list_multi_delete: {
-                        ids = mAdapter.getCurrentSelectedMasterKeyIds();
-                        showDeleteKeyDialog(mode, ids, mAdapter.isAnySecretSelected());
-                        break;
-                    }
-                    case R.id.menu_key_list_multi_export: {
-                        ids = mAdapter.getCurrentSelectedMasterKeyIds();
-                        showMultiExportDialog(ids);
-                        break;
-                    }
-                    case R.id.menu_key_list_multi_select_all: {
-                        // select all
-                        for (int i = 0; i < mStickyList.getCount(); i++) {
-                            mStickyList.setItemChecked(i, true);
-                        }
-                        break;
-                    }
-                }
-                return true;
-            }
-
-            @Override
-            public void onDestroyActionMode(ActionMode mode) {
-                mActionMode = null;
-                mAdapter.clearSelection();
-            }
-
-            @Override
-            public void onItemCheckedStateChanged(ActionMode mode, int position, long id,
-                                                  boolean checked) {
-                if (checked) {
-                    mAdapter.setNewSelection(position, true);
-                } else {
-                    mAdapter.removeSelection(position);
-                }
-                int count = mStickyList.getCheckedItemCount();
-                String keysSelected = getResources().getQuantityString(
-                        R.plurals.key_list_selected_keys, count, count);
-                mode.setTitle(keysSelected);
-            }
-
-        });
-
         // We have a menu item to show in action bar.
         setHasOptionsMenu(true);
 
@@ -284,8 +177,9 @@ public class KeyListFragment extends LoaderFragment
         setContentShown(false);
 
         // Create an empty adapter we will use to display the loaded data.
-        mAdapter = new KeyListAdapter(getActivity(), null, 0);
-        mStickyList.setAdapter(mAdapter);
+        mAdapter = new KeyListAdapter(getActivity());
+        mAdapter.setOnClickListener(this);
+        mRecyclerView.setAdapter(mAdapter);
 
         // Prepare the loader. Either re-connect with an existing one,
         // or start a new one.
@@ -303,14 +197,6 @@ public class KeyListFragment extends LoaderFragment
             KeyRings.HAS_ANY_SECRET,
             KeyRings.HAS_DUPLICATE_USER_ID,
     };
-
-    static final int INDEX_MASTER_KEY_ID = 1;
-    static final int INDEX_USER_ID = 2;
-    static final int INDEX_IS_REVOKED = 3;
-    static final int INDEX_IS_EXPIRED = 4;
-    static final int INDEX_VERIFIED = 5;
-    static final int INDEX_HAS_ANY_SECRET = 6;
-    static final int INDEX_HAS_DUPLICATE_USER_ID = 7;
 
     static final String ORDER =
             KeyRings.HAS_ANY_SECRET + " DESC, UPPER(" + KeyRings.USER_ID + ") ASC";
@@ -349,10 +235,17 @@ public class KeyListFragment extends LoaderFragment
         mAdapter.setSearchQuery(mQuery);
         mAdapter.swapCursor(data);
 
-        mStickyList.setAdapter(mAdapter);
+        mRecyclerView.setAdapter(mAdapter);
 
         // this view is made visible if no data is available
-        mStickyList.setEmptyView(getActivity().findViewById(R.id.key_list_empty));
+        LinearLayout emptyLayout = (LinearLayout) getActivity().findViewById(R.id.key_list_empty);
+        if (mAdapter.getItemCount() == 0) {
+            mRecyclerView.setVisibility(View.GONE);
+            emptyLayout.setVisibility(View.VISIBLE);
+        } else {
+            emptyLayout.setVisibility(View.GONE);
+            mRecyclerView.setVisibility(View.VISIBLE);
+        }
 
         // end action mode, if any
         if (mActionMode != null) {
@@ -375,15 +268,38 @@ public class KeyListFragment extends LoaderFragment
         mAdapter.swapCursor(null);
     }
 
-    /**
-     * On click on item, start key view activity
-     */
     @Override
-    public void onItemClick(AdapterView<?> adapterView, View view, int position, long id) {
-        Intent viewIntent = new Intent(getActivity(), ViewKeyActivity.class);
-        viewIntent.setData(
-                KeyRings.buildGenericKeyRingUri(mAdapter.getMasterKeyId(position)));
-        startActivity(viewIntent);
+    public void onImportClick() {
+        importFile();
+    }
+
+    @Override
+    public void onKeySlingerClick(KeyListAdapter.KeyHolder holder, int position) {
+        Intent safeSlingerIntent = new Intent(getActivity(), SafeSlingerActivity.class);
+        safeSlingerIntent.putExtra(SafeSlingerActivity.EXTRA_MASTER_KEY_ID, holder.getMasterKeyId());
+        startActivityForResult(safeSlingerIntent, 0);
+    }
+
+    @Override
+    public void onKeyClick(KeyListAdapter.KeyHolder holder, int position) {
+        if (mActionMode == null) {
+            Intent viewIntent = new Intent(getActivity(), ViewKeyActivity.class);
+            viewIntent.setData(KeychainContract.KeyRings.buildGenericKeyRingUri(holder.getMasterKeyId()));
+            startActivity(viewIntent);
+        } else {
+            mAdapter.toggleSelection(position);
+            updateSelectionCount();
+        }
+    }
+
+    @Override
+    public void onKeyLongClick(KeyListAdapter.KeyHolder holder, int position) {
+        if (mActionMode == null) {
+            ((ActionBarActivity) getActivity()).startSupportActionMode(this);
+        }
+
+        mAdapter.toggleSelection(position);
+        updateSelectionCount();
     }
 
     protected void encrypt(ActionMode mode, long[] masterKeyIds) {
@@ -787,292 +703,62 @@ public class KeyListFragment extends LoaderFragment
         anim.start();
     }
 
-    /**
-     * Implements StickyListHeadersAdapter from library
-     */
-    private class KeyListAdapter extends CursorAdapter implements StickyListHeadersAdapter {
-        private String mQuery;
-        private LayoutInflater mInflater;
-
-        private HashMap<Integer, Boolean> mSelection = new HashMap<>();
-
-        public KeyListAdapter(Context context, Cursor c, int flags) {
-            super(context, c, flags);
-
-            mInflater = LayoutInflater.from(context);
-        }
-
-        public void setSearchQuery(String query) {
-            mQuery = query;
-        }
-
-        @Override
-        public Cursor swapCursor(Cursor newCursor) {
-            return super.swapCursor(newCursor);
-        }
-
-        private class ItemViewHolder {
-            Long mMasterKeyId;
-            TextView mMainUserId;
-            TextView mMainUserIdRest;
-            ImageView mStatus;
-            View mSlinger;
-            ImageButton mSlingerButton;
-        }
-
-        @Override
-        public View newView(Context context, Cursor cursor, ViewGroup parent) {
-            View view = mInflater.inflate(R.layout.key_list_item, parent, false);
-            final ItemViewHolder holder = new ItemViewHolder();
-            holder.mMainUserId = (TextView) view.findViewById(R.id.key_list_item_name);
-            holder.mMainUserIdRest = (TextView) view.findViewById(R.id.key_list_item_email);
-            holder.mStatus = (ImageView) view.findViewById(R.id.key_list_item_status_icon);
-            holder.mSlinger = view.findViewById(R.id.key_list_item_slinger_view);
-            holder.mSlingerButton = (ImageButton) view.findViewById(R.id.key_list_item_slinger_button);
-            holder.mSlingerButton.setColorFilter(context.getResources().getColor(R.color.tertiary_text_light),
-                    PorterDuff.Mode.SRC_IN);
-            view.setTag(holder);
-            view.findViewById(R.id.key_list_item_slinger_button).setOnClickListener(new OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    if (holder.mMasterKeyId != null) {
-                        Intent safeSlingerIntent = new Intent(getActivity(), SafeSlingerActivity.class);
-                        safeSlingerIntent.putExtra(SafeSlingerActivity.EXTRA_MASTER_KEY_ID, holder.mMasterKeyId);
-                        startActivityForResult(safeSlingerIntent, REQUEST_ACTION);
-                    }
-                }
-            });
-            return view;
-        }
-
-        /**
-         * Bind cursor data to the item list view
-         */
-        @Override
-        public void bindView(View view, Context context, Cursor cursor) {
-            Highlighter highlighter = new Highlighter(context, mQuery);
-            ItemViewHolder h = (ItemViewHolder) view.getTag();
-
-            { // set name and stuff, common to both key types
-                String userId = cursor.getString(INDEX_USER_ID);
-                KeyRing.UserId userIdSplit = KeyRing.splitUserId(userId);
-                if (userIdSplit.name != null) {
-                    h.mMainUserId.setText(highlighter.highlight(userIdSplit.name));
-                } else {
-                    h.mMainUserId.setText(R.string.user_id_no_name);
-                }
-                if (userIdSplit.email != null) {
-                    h.mMainUserIdRest.setText(highlighter.highlight(userIdSplit.email));
-                    h.mMainUserIdRest.setVisibility(View.VISIBLE);
-                } else {
-                    h.mMainUserIdRest.setVisibility(View.GONE);
-                }
-            }
-
-            { // set edit button and status, specific by key type
-
-                long masterKeyId = cursor.getLong(INDEX_MASTER_KEY_ID);
-                boolean isSecret = cursor.getInt(INDEX_HAS_ANY_SECRET) != 0;
-                boolean isRevoked = cursor.getInt(INDEX_IS_REVOKED) > 0;
-                boolean isExpired = cursor.getInt(INDEX_IS_EXPIRED) != 0;
-                boolean isVerified = cursor.getInt(INDEX_VERIFIED) > 0;
-                boolean hasDuplicate = cursor.getInt(INDEX_HAS_DUPLICATE_USER_ID) == 1;
-
-                h.mMasterKeyId = masterKeyId;
-
-                // Note: order is important!
-                if (isRevoked) {
-                    KeyFormattingUtils.setStatusImage(getActivity(), h.mStatus, null, State.REVOKED, R.color.bg_gray);
-                    h.mStatus.setVisibility(View.VISIBLE);
-                    h.mSlinger.setVisibility(View.GONE);
-                    h.mMainUserId.setTextColor(context.getResources().getColor(R.color.bg_gray));
-                    h.mMainUserIdRest.setTextColor(context.getResources().getColor(R.color.bg_gray));
-                } else if (isExpired) {
-                    KeyFormattingUtils.setStatusImage(getActivity(), h.mStatus, null, State.EXPIRED, R.color.bg_gray);
-                    h.mStatus.setVisibility(View.VISIBLE);
-                    h.mSlinger.setVisibility(View.GONE);
-                    h.mMainUserId.setTextColor(context.getResources().getColor(R.color.bg_gray));
-                    h.mMainUserIdRest.setTextColor(context.getResources().getColor(R.color.bg_gray));
-                } else if (isSecret) {
-                    h.mStatus.setVisibility(View.GONE);
-                    h.mSlinger.setVisibility(View.VISIBLE);
-                    h.mMainUserId.setTextColor(context.getResources().getColor(R.color.black));
-                    h.mMainUserIdRest.setTextColor(context.getResources().getColor(R.color.black));
-                } else {
-                    // this is a public key - show if it's verified
-                    if (isVerified) {
-                        KeyFormattingUtils.setStatusImage(getActivity(), h.mStatus, State.VERIFIED);
-                        h.mStatus.setVisibility(View.VISIBLE);
-                    } else {
-                        KeyFormattingUtils.setStatusImage(getActivity(), h.mStatus, State.UNVERIFIED);
-                        h.mStatus.setVisibility(View.VISIBLE);
-                    }
-                    h.mSlinger.setVisibility(View.GONE);
-                    h.mMainUserId.setTextColor(context.getResources().getColor(R.color.black));
-                    h.mMainUserIdRest.setTextColor(context.getResources().getColor(R.color.black));
-                }
-            }
-
-        }
-
-        public boolean isSecretAvailable(int id) {
-            if (!mCursor.moveToPosition(id)) {
-                throw new IllegalStateException("couldn't move cursor to position " + id);
-            }
-
-            return mCursor.getInt(INDEX_HAS_ANY_SECRET) != 0;
-        }
-
-        public long getMasterKeyId(int id) {
-            if (!mCursor.moveToPosition(id)) {
-                throw new IllegalStateException("couldn't move cursor to position " + id);
-            }
-
-            return mCursor.getLong(INDEX_MASTER_KEY_ID);
-        }
-
-        /**
-         * Creates a new header view and binds the section headers to it. It uses the ViewHolder
-         * pattern. Most functionality is similar to getView() from Android's CursorAdapter.
-         * <p/>
-         * NOTE: The variables mDataValid and mCursor are available due to the super class
-         * CursorAdapter.
-         */
-        @Override
-        public View getHeaderView(int position, View convertView, ViewGroup parent) {
-            HeaderViewHolder holder;
-            if (convertView == null) {
-                holder = new HeaderViewHolder();
-                convertView = mInflater.inflate(R.layout.key_list_header, parent, false);
-                holder.mText = (TextView) convertView.findViewById(R.id.stickylist_header_text);
-                holder.mCount = (TextView) convertView.findViewById(R.id.contacts_num);
-                convertView.setTag(holder);
-            } else {
-                holder = (HeaderViewHolder) convertView.getTag();
-            }
-
-            if (!mDataValid) {
-                // no data available at this point
-                Log.d(Constants.TAG, "getHeaderView: No data available at this point!");
-                return convertView;
-            }
-
-            if (!mCursor.moveToPosition(position)) {
-                throw new IllegalStateException("couldn't move cursor to position " + position);
-            }
-
-            if (mCursor.getInt(KeyListFragment.INDEX_HAS_ANY_SECRET) != 0) {
-                { // set contact count
-                    int num = mCursor.getCount();
-                    String contactsTotal = getResources().getQuantityString(R.plurals.n_keys, num, num);
-                    holder.mCount.setText(contactsTotal);
-                    holder.mCount.setVisibility(View.VISIBLE);
-                }
-
-                holder.mText.setText(convertView.getResources().getString(R.string.my_keys));
-                return convertView;
-            }
-
-            // set header text as first char in user id
-            String userId = mCursor.getString(KeyListFragment.INDEX_USER_ID);
-            String headerText = convertView.getResources().getString(R.string.user_id_no_name);
-            if (userId != null && userId.length() > 0) {
-                headerText = "" + userId.charAt(0);
-            }
-            holder.mText.setText(headerText);
-            holder.mCount.setVisibility(View.GONE);
-            return convertView;
-        }
-
-        /**
-         * Header IDs should be static, position=1 should always return the same Id that is.
-         */
-        @Override
-        public long getHeaderId(int position) {
-            if (!mDataValid) {
-                // no data available at this point
-                Log.d(Constants.TAG, "getHeaderView: No data available at this point!");
-                return -1;
-            }
-
-            if (!mCursor.moveToPosition(position)) {
-                throw new IllegalStateException("couldn't move cursor to position " + position);
-            }
-
-            // early breakout: all secret keys are assigned id 0
-            if (mCursor.getInt(KeyListFragment.INDEX_HAS_ANY_SECRET) != 0) {
-                return 1L;
-            }
-            // otherwise, return the first character of the name as ID
-            String userId = mCursor.getString(KeyListFragment.INDEX_USER_ID);
-            if (userId != null && userId.length() > 0) {
-                return Character.toUpperCase(userId.charAt(0));
-            } else {
-                return Long.MAX_VALUE;
-            }
-        }
-
-        private class HeaderViewHolder {
-            TextView mText;
-            TextView mCount;
-        }
-
-        /**
-         * -------------------------- MULTI-SELECTION METHODS --------------
-         */
-        public void setNewSelection(int position, boolean value) {
-            mSelection.put(position, value);
-            notifyDataSetChanged();
-        }
-
-        public boolean isAnySecretSelected() {
-            for (int pos : mSelection.keySet()) {
-                if (mAdapter.isSecretAvailable(pos))
-                    return true;
-            }
-            return false;
-        }
-
-        public long[] getCurrentSelectedMasterKeyIds() {
-            long[] ids = new long[mSelection.size()];
-            int i = 0;
-            // get master key ids
-            for (int pos : mSelection.keySet()) {
-                ids[i++] = mAdapter.getMasterKeyId(pos);
-            }
-            return ids;
-        }
-
-        public void removeSelection(int position) {
-            mSelection.remove(position);
-            notifyDataSetChanged();
-        }
-
-        public void clearSelection() {
-            mSelection.clear();
-            notifyDataSetChanged();
-        }
-
-        @Override
-        public View getView(int position, View convertView, ViewGroup parent) {
-            // let the adapter handle setting up the row views
-            View v = super.getView(position, convertView, parent);
-
-            /**
-             * Change color for multi-selection
-             */
-            if (mSelection.get(position) != null) {
-                // selected position color
-                v.setBackgroundColor(parent.getResources().getColor(R.color.emphasis));
-            } else {
-                // default color
-                v.setBackgroundColor(Color.TRANSPARENT);
-            }
-
-            return v;
-        }
-
+    @Override
+    public boolean onCreateActionMode(ActionMode actionMode, Menu menu) {
+        MenuInflater inflater = getActivity().getMenuInflater();
+        inflater.inflate(R.menu.key_list_multi, menu);
+        mActionMode = actionMode;
+        return true;
     }
 
+    @Override
+    public boolean onPrepareActionMode(ActionMode actionMode, Menu menu) {
+        return false;
+    }
+
+    @Override
+    public boolean onActionItemClicked(ActionMode actionMode, MenuItem menuItem) {
+        // get IDs for checked positions as long array
+        long[] ids;
+
+        switch (menuItem.getItemId()) {
+            case R.id.menu_key_list_multi_encrypt: {
+                ids = mAdapter.getCurrentSelectedMasterKeyIds();
+                encrypt(actionMode, ids);
+                break;
+            }
+            case R.id.menu_key_list_multi_delete: {
+                ids = mAdapter.getCurrentSelectedMasterKeyIds();
+                showDeleteKeyDialog(actionMode, ids, mAdapter.isAnySecretSelected());
+                break;
+            }
+            case R.id.menu_key_list_multi_export: {
+                ids = mAdapter.getCurrentSelectedMasterKeyIds();
+                showMultiExportDialog(ids);
+                break;
+            }
+            case R.id.menu_key_list_multi_select_all: {
+                mAdapter.selectAll();
+                updateSelectionCount();
+                break;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public void onDestroyActionMode(ActionMode actionMode) {
+        mActionMode = null;
+        mAdapter.clearSelection();
+    }
+
+    private void updateSelectionCount() {
+        int count = mAdapter.getSelectionCount();
+        if (count == 0) {
+            mActionMode.finish();
+        } else {
+            mActionMode.setTitle(getResources().getQuantityString(R.plurals.key_list_selected_keys, count, count));
+        }
+    }
 
 }

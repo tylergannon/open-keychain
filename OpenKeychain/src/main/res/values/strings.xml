@@ -85,6 +85,7 @@
     <string name="btn_encrypt_files">"Encrypt files"</string>
     <string name="btn_encrypt_text">"Encrypt text"</string>
     <string name="btn_add_email">"Add additional email address"</string>
+    <string name="btn_import_from_file">Import from file</string>
 
     <!-- menu -->
     <string name="menu_preferences">"Settings"</string>
