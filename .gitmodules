@@ -1,7 +1,3 @@
-[submodule "extern/StickyListHeaders"]
-	path = extern/StickyListHeaders
-	url = https://github.com/open-keychain/StickyListHeaders.git
-	ignore = dirty
 [submodule "extern/spongycastle"]
 	path = extern/spongycastle
 	url = https://github.com/open-keychain/spongycastle.git

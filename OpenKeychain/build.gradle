@@ -2,11 +2,8 @@ apply plugin: 'com.android.application'
 apply plugin: 'witness'
 
 dependencies {
-
     // NOTE: Always use fixed version codes not dynamic ones, e.g. 0.7.3 instead of 0.7.+, see README for more information
-
     // NOTE: libraries are pinned to a specific build, see below
-
     // from local Android SDK
     compile 'com.android.support:support-v4:22.0.0'
     compile 'com.android.support:appcompat-v7:22.0.0'
@@ -26,7 +23,6 @@ dependencies {
     compile project(':extern:openpgp-api-lib')
     compile project(':extern:openkeychain-api-lib')
     compile project(':extern:html-textview')
-    compile project(':extern:StickyListHeaders:library')
     compile project(':extern:spongycastle:core')
     compile project(':extern:spongycastle:pg')
     compile project(':extern:spongycastle:pkix')
