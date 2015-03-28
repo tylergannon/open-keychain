@@ -732,7 +732,7 @@ public class KeyListFragment extends LoaderFragment
         mAdapter.clearSelection();
     }
 
-    public class KeyListAdapter extends RecyclerCursorAdapter {
+    private class KeyListAdapter extends RecyclerCursorAdapter {
 
         private Context mContext;
         private ArrayList<Item> mItemList = new ArrayList<>();

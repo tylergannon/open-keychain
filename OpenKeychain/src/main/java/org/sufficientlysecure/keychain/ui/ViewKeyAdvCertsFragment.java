@@ -25,12 +25,14 @@ import android.os.Bundle;
 import android.support.v4.app.LoaderManager;
 import android.support.v4.content.CursorLoader;
 import android.support.v4.content.Loader;
-import android.support.v4.widget.CursorAdapter;
+import android.support.v7.widget.RecyclerView;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.AdapterView;
 import android.widget.TextView;
+
+import com.tonicartos.superslim.LayoutManager;
+import com.tonicartos.superslim.LinearSLM;
 
 import org.sufficientlysecure.keychain.Constants;
 import org.sufficientlysecure.keychain.R;
@@ -38,19 +40,19 @@ import org.sufficientlysecure.keychain.pgp.KeyRing;
 import org.sufficientlysecure.keychain.pgp.WrappedSignature;
 import org.sufficientlysecure.keychain.provider.KeychainContract;
 import org.sufficientlysecure.keychain.provider.KeychainDatabase;
+import org.sufficientlysecure.keychain.ui.adapter.RecyclerCursorAdapter;
 import org.sufficientlysecure.keychain.ui.util.KeyFormattingUtils;
 import org.sufficientlysecure.keychain.util.Log;
 
-import se.emilsjolander.stickylistheaders.StickyListHeadersAdapter;
-import se.emilsjolander.stickylistheaders.StickyListHeadersListView;
+import java.util.ArrayList;
 
 
 public class ViewKeyAdvCertsFragment extends LoaderFragment implements
-        LoaderManager.LoaderCallbacks<Cursor>, AdapterView.OnItemClickListener {
+        LoaderManager.LoaderCallbacks<Cursor> {
 
     public static final String ARG_DATA_URI = "data_uri";
 
-    private StickyListHeadersListView mStickyList;
+    private RecyclerView mRecyclerView;
     private CertListAdapter mCertsAdapter;
 
     private Uri mDataUriCerts;
@@ -92,7 +94,9 @@ public class ViewKeyAdvCertsFragment extends LoaderFragment implements
         View root = super.onCreateView(inflater, superContainer, savedInstanceState);
         View view = inflater.inflate(R.layout.view_key_adv_certs_fragment, getContainer());
 
-        mStickyList = (StickyListHeadersListView) view.findViewById(R.id.certs_list);
+        mRecyclerView = (RecyclerView) view.findViewById(R.id.certs_recycler);
+        mRecyclerView.setHasFixedSize(true);
+        mRecyclerView.setLayoutManager(new LayoutManager(getActivity()));
 
         return root;
     }
@@ -114,15 +118,9 @@ public class ViewKeyAdvCertsFragment extends LoaderFragment implements
     private void loadData(Uri dataUri) {
         mDataUriCerts = KeychainContract.Certs.buildCertsUri(dataUri);
 
-        mStickyList.setAreHeadersSticky(true);
-        mStickyList.setDrawingListUnderStickyHeader(false);
-        mStickyList.setOnItemClickListener(this);
-
-        mStickyList.setEmptyView(getActivity().findViewById(R.id.empty));
-
         // Create an empty adapter we will use to display the loaded data.
-        mCertsAdapter = new CertListAdapter(getActivity(), null);
-        mStickyList.setAdapter(mCertsAdapter);
+        mCertsAdapter = new CertListAdapter(getActivity());
+        mRecyclerView.setAdapter(mCertsAdapter);
 
         // Prepare the loaders. Either re-connect with an existing ones,
         // or start new ones.
@@ -149,7 +147,16 @@ public class ViewKeyAdvCertsFragment extends LoaderFragment implements
         // Swap the new cursor in. (The framework will take care of closing the
         // old cursor once we return.)
         mCertsAdapter.swapCursor(data);
-        mStickyList.setAdapter(mCertsAdapter);
+        mRecyclerView.setAdapter(mCertsAdapter);
+
+        TextView emptyTextView = (TextView) getActivity().findViewById(R.id.empty);
+        if (mCertsAdapter.getItemCount() == 0) {
+            mRecyclerView.setVisibility(View.GONE);
+            emptyTextView.setVisibility(View.VISIBLE);
+        } else {
+            emptyTextView.setVisibility(View.GONE);
+            mRecyclerView.setVisibility(View.VISIBLE);
+        }
 
         // TODO: maybe show not before both are loaded!
         setContentShown(true);
@@ -163,180 +170,206 @@ public class ViewKeyAdvCertsFragment extends LoaderFragment implements
         mCertsAdapter.swapCursor(null);
     }
 
-    /**
-     * On click on item, start key view activity
-     */
-    @Override
-    public void onItemClick(AdapterView<?> adapterView, View view, int position, long id) {
-        if (view.getTag(R.id.tag_mki) != null) {
-            long masterKeyId = (Long) view.getTag(R.id.tag_mki);
-            long rank = (Long) view.getTag(R.id.tag_rank);
-            long certifierId = (Long) view.getTag(R.id.tag_certifierId);
+    private class CertListAdapter extends RecyclerCursorAdapter {
 
-            Intent viewIntent = new Intent(getActivity(), ViewCertActivity.class);
-            viewIntent.setData(KeychainContract.Certs.buildCertsSpecificUri(
-                    masterKeyId, rank, certifierId));
-            startActivity(viewIntent);
-        }
-    }
-
-
-    /**
-     * Implements StickyListHeadersAdapter from library
-     */
-    private class CertListAdapter extends CursorAdapter implements StickyListHeadersAdapter {
-        private LayoutInflater mInflater;
+        private Context mContext;
+        private ArrayList<Item> mItemList = new ArrayList<>();
         private int mIndexMasterKeyId, mIndexUserId, mIndexRank;
         private int mIndexSignerKeyId, mIndexSignerUserId;
         private int mIndexVerified, mIndexType;
 
-        public CertListAdapter(Context context, Cursor c) {
-            super(context, c, 0);
+        public CertListAdapter(Context context) {
+            super(null);
 
-            mInflater = LayoutInflater.from(context);
-            initIndex(c);
+            mContext = context;
+
+            setOnCursorSwappedListener(new OnCursorSwappedListener() {
+
+                @Override
+                public void onCursorSwapped(Cursor oldCursor, Cursor newCursor) {
+                    mItemList = new ArrayList<>();
+
+                    if (newCursor == null) {
+                        return;
+                    }
+
+                    int count = newCursor.getCount();
+                    if (count == 0) {
+                        return;
+                    }
+
+                    // Get column indexes for performance reasons.
+                    // For a performance comparison see http://stackoverflow.com/a/17999582
+                    mIndexMasterKeyId = newCursor.getColumnIndexOrThrow(KeychainContract.Certs.MASTER_KEY_ID);
+                    mIndexUserId = newCursor.getColumnIndexOrThrow(KeychainContract.Certs.USER_ID);
+                    mIndexRank = newCursor.getColumnIndexOrThrow(KeychainContract.Certs.RANK);
+                    mIndexType = newCursor.getColumnIndexOrThrow(KeychainContract.Certs.TYPE);
+                    mIndexVerified = newCursor.getColumnIndexOrThrow(KeychainContract.Certs.VERIFIED);
+                    mIndexSignerKeyId = newCursor.getColumnIndexOrThrow(KeychainContract.Certs.KEY_ID_CERTIFIER);
+                    mIndexSignerUserId = newCursor.getColumnIndexOrThrow(KeychainContract.Certs.SIGNER_UID);
+
+                    int prevHeaderIndex;
+                    for (int i = 0; i < count; i++) {
+                        prevHeaderIndex = mItemList.size();
+                        mItemList.add(new Item(Item.TYPE_HEADER, prevHeaderIndex));
+                        mItemList.add(new Item(Item.TYPE_CERT, prevHeaderIndex, i));
+                    }
+                }
+
+            });
         }
 
         @Override
-        public Cursor swapCursor(Cursor newCursor) {
-            initIndex(newCursor);
-
-            return super.swapCursor(newCursor);
-        }
-
-        /**
-         * Get column indexes for performance reasons just once in constructor and swapCursor. For a
-         * performance comparison see http://stackoverflow.com/a/17999582
-         *
-         * @param cursor
-         */
-        private void initIndex(Cursor cursor) {
-            if (cursor != null) {
-                mIndexMasterKeyId = cursor.getColumnIndexOrThrow(KeychainContract.Certs.MASTER_KEY_ID);
-                mIndexUserId = cursor.getColumnIndexOrThrow(KeychainContract.Certs.USER_ID);
-                mIndexRank = cursor.getColumnIndexOrThrow(KeychainContract.Certs.RANK);
-                mIndexType = cursor.getColumnIndexOrThrow(KeychainContract.Certs.TYPE);
-                mIndexVerified = cursor.getColumnIndexOrThrow(KeychainContract.Certs.VERIFIED);
-                mIndexSignerKeyId = cursor.getColumnIndexOrThrow(KeychainContract.Certs.KEY_ID_CERTIFIER);
-                mIndexSignerUserId = cursor.getColumnIndexOrThrow(KeychainContract.Certs.SIGNER_UID);
-            }
-        }
-
-        /**
-         * Bind cursor data to the item list view
-         * <p/>
-         * NOTE: CursorAdapter already implements the ViewHolder pattern in its getView() method.
-         * Thus no ViewHolder is required here.
-         */
-        @Override
-        public void bindView(View view, Context context, Cursor cursor) {
-
-            // set name and stuff, common to both key types
-            TextView wSignerKeyId = (TextView) view.findViewById(R.id.signerKeyId);
-            TextView wSignerName = (TextView) view.findViewById(R.id.signerName);
-            TextView wSignStatus = (TextView) view.findViewById(R.id.signStatus);
-
-            String signerKeyId = KeyFormattingUtils.beautifyKeyIdWithPrefix(getActivity(), cursor.getLong(mIndexSignerKeyId));
-            KeyRing.UserId userId = KeyRing.splitUserId(cursor.getString(mIndexSignerUserId));
-            if (userId.name != null) {
-                wSignerName.setText(userId.name);
-            } else {
-                wSignerName.setText(R.string.user_id_no_name);
-            }
-            wSignerKeyId.setText(signerKeyId);
-
-            switch (cursor.getInt(mIndexType)) {
-                case WrappedSignature.DEFAULT_CERTIFICATION: // 0x10
-                    wSignStatus.setText(R.string.cert_default);
+        public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+            RecyclerView.ViewHolder viewHolder = null;
+            switch (viewType) {
+                case Item.TYPE_HEADER:
+                    viewHolder = new HeaderViewHolder(LayoutInflater.from(mContext)
+                            .inflate(R.layout.view_key_adv_certs_header, parent, false));
                     break;
-                case WrappedSignature.NO_CERTIFICATION: // 0x11
-                    wSignStatus.setText(R.string.cert_none);
-                    break;
-                case WrappedSignature.CASUAL_CERTIFICATION: // 0x12
-                    wSignStatus.setText(R.string.cert_casual);
-                    break;
-                case WrappedSignature.POSITIVE_CERTIFICATION: // 0x13
-                    wSignStatus.setText(R.string.cert_positive);
-                    break;
-                case WrappedSignature.CERTIFICATION_REVOCATION: // 0x30
-                    wSignStatus.setText(R.string.cert_revoke);
+
+                case Item.TYPE_CERT:
+                    viewHolder = new CertViewHolder(LayoutInflater.from(mContext)
+                            .inflate(R.layout.view_key_adv_certs_item, parent, false));
                     break;
             }
 
-
-            view.setTag(R.id.tag_mki, cursor.getLong(mIndexMasterKeyId));
-            view.setTag(R.id.tag_rank, cursor.getLong(mIndexRank));
-            view.setTag(R.id.tag_certifierId, cursor.getLong(mIndexSignerKeyId));
+            return viewHolder;
         }
 
         @Override
-        public View newView(Context context, Cursor cursor, ViewGroup parent) {
-            return mInflater.inflate(R.layout.view_key_adv_certs_item, parent, false);
+        public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
+            Item item = mItemList.get(position);
+            switch (item.mType) {
+                case Item.TYPE_HEADER:
+                    ((HeaderViewHolder) holder).bind(position);
+                    break;
+
+                case Item.TYPE_CERT:
+                    ((CertViewHolder) holder).bind(position);
+                    break;
+            }
+
+            View itemView = holder.itemView;
+            LayoutManager.LayoutParams layoutParams = new LayoutManager.LayoutParams(itemView.getLayoutParams());
+            layoutParams.setSlm(LinearSLM.ID);
+            layoutParams.setFirstPosition(item.mHeaderIndex);
+            itemView.setLayoutParams(layoutParams);
         }
 
-        /**
-         * Creates a new header view and binds the section headers to it. It uses the ViewHolder
-         * pattern. Most functionality is similar to getView() from Android's CursorAdapter.
-         * <p/>
-         * NOTE: The variables mDataValid and mCursor are available due to the super class
-         * CursorAdapter.
-         */
         @Override
-        public View getHeaderView(int position, View convertView, ViewGroup parent) {
-            HeaderViewHolder holder;
-            if (convertView == null) {
-                holder = new HeaderViewHolder();
-                convertView = mInflater.inflate(R.layout.view_key_adv_certs_header, parent, false);
-                holder.text = (TextView) convertView.findViewById(R.id.stickylist_header_text);
-                holder.count = (TextView) convertView.findViewById(R.id.certs_num);
-                convertView.setTag(holder);
-            } else {
-                holder = (HeaderViewHolder) convertView.getTag();
-            }
-
-            if (!mDataValid) {
-                // no data available at this point
-                Log.d(Constants.TAG, "getHeaderView: No data available at this point!");
-                return convertView;
-            }
-
-            if (!mCursor.moveToPosition(position)) {
-                throw new IllegalStateException("couldn't move cursor to position " + position);
-            }
-
-            // set header text as first char in user id
-            String userId = mCursor.getString(mIndexUserId);
-            holder.text.setText(userId);
-            holder.count.setVisibility(View.GONE);
-            return convertView;
+        public int getItemViewType(int position) {
+            return mItemList.get(position).mType;
         }
 
-        /**
-         * Header IDs should be static, position=1 should always return the same Id that is.
-         */
         @Override
-        public long getHeaderId(int position) {
-            if (!mDataValid) {
-                // no data available at this point
-                Log.d(Constants.TAG, "getHeaderView: No data available at this point!");
-                return -1;
-            }
-
-            if (!mCursor.moveToPosition(position)) {
-                throw new IllegalStateException("couldn't move cursor to position " + position);
-            }
-
-            // otherwise, return the first character of the name as ID
-            return mCursor.getInt(mIndexRank);
-
-            // sort by the first four characters (should be enough I guess?)
-            // return ByteBuffer.wrap(userId.getBytes()).asLongBuffer().get(0);
+        public int getItemCount() {
+            return mItemList.size();
         }
 
-        class HeaderViewHolder {
-            TextView text;
-            TextView count;
+        private class Item {
+
+            public static final int TYPE_HEADER = 0;
+            public static final int TYPE_CERT = 1;
+
+            private int mType, mHeaderIndex, mCursorPosition;
+
+            private Item(int type, int headerIndex, int cursorPosition) {
+                mType = type;
+                mHeaderIndex = headerIndex;
+                mCursorPosition = cursorPosition;
+            }
+
+            private Item(int type, int headerIndex) {
+                this(type, headerIndex, -1);
+            }
+
+        }
+
+        private class HeaderViewHolder extends RecyclerView.ViewHolder {
+
+            private TextView mTextView, mCountTextView;
+
+            public HeaderViewHolder(View itemView) {
+                super(itemView);
+
+                mTextView = (TextView) itemView.findViewById(R.id.certs_text);
+                mCountTextView = (TextView) itemView.findViewById(R.id.certs_num);
+            }
+
+            private void bind(int position) {
+                Item nextItem = mItemList.get(position + 1);
+                mCursor.moveToPosition(nextItem.mCursorPosition);
+
+                mTextView.setText(mCursor.getString(mIndexUserId));
+                mCountTextView.setVisibility(View.GONE);
+            }
+
+        }
+
+        private class CertViewHolder extends RecyclerView.ViewHolder {
+
+            private TextView mSignerNameTextView, mSignerKeyIdTextView, mSignStatusTextView;
+            private long mMasterKeyId, mRank, mSignerKeyId;
+
+            public CertViewHolder(View itemView) {
+                super(itemView);
+
+                mSignerNameTextView = (TextView) itemView.findViewById(R.id.signerName);
+                mSignerKeyIdTextView = (TextView) itemView.findViewById(R.id.signerKeyId);
+                mSignStatusTextView = (TextView) itemView.findViewById(R.id.signStatus);
+
+                itemView.setOnClickListener(new View.OnClickListener() {
+
+                    @Override
+                    public void onClick(View v) {
+                        Intent viewIntent = new Intent(getActivity(), ViewCertActivity.class);
+                        viewIntent.setData(KeychainContract.Certs.buildCertsSpecificUri(
+                                mMasterKeyId, mRank, mSignerKeyId));
+                        startActivity(viewIntent);
+                    }
+
+                });
+            }
+
+            private void bind(int position) {
+                Item item = mItemList.get(position);
+                mCursor.moveToPosition(item.mCursorPosition);
+
+                String signerKeyId = KeyFormattingUtils.beautifyKeyIdWithPrefix(mContext, mCursor.getLong(mIndexSignerKeyId));
+                KeyRing.UserId userId = KeyRing.splitUserId(mCursor.getString(mIndexSignerUserId));
+                if (userId.name != null) {
+                    mSignerNameTextView.setText(userId.name);
+                } else {
+                    mSignerNameTextView.setText(R.string.user_id_no_name);
+                }
+                mSignerKeyIdTextView.setText(signerKeyId);
+
+                switch (mCursor.getInt(mIndexType)) {
+                    case WrappedSignature.DEFAULT_CERTIFICATION: // 0x10
+                        mSignStatusTextView.setText(R.string.cert_default);
+                        break;
+                    case WrappedSignature.NO_CERTIFICATION: // 0x11
+                        mSignStatusTextView.setText(R.string.cert_none);
+                        break;
+                    case WrappedSignature.CASUAL_CERTIFICATION: // 0x12
+                        mSignStatusTextView.setText(R.string.cert_casual);
+                        break;
+                    case WrappedSignature.POSITIVE_CERTIFICATION: // 0x13
+                        mSignStatusTextView.setText(R.string.cert_positive);
+                        break;
+                    case WrappedSignature.CERTIFICATION_REVOCATION: // 0x30
+                        mSignStatusTextView.setText(R.string.cert_revoke);
+                        break;
+                }
+
+                mMasterKeyId = mCursor.getLong(mIndexMasterKeyId);
+                mRank = mCursor.getLong(mIndexRank);
+                mSignerKeyId = mCursor.getLong(mIndexSignerKeyId);
+            }
+
         }
 
     }
+
 }
