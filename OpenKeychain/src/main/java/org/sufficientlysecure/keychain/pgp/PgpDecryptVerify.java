@@ -767,20 +767,11 @@ public class PgpDecryptVerify extends BaseOperation<PgpDecryptVerifyInputParcel>
                 // TODO: slow annealing to fake a progress?
             }
 
-            // after going through the stream, size should be available
-            Long originalSize = literalData.getDataLengthIfAvailable();
-            if (originalSize != null) {
-                log.add(LogType.MSG_DC_CLEAR_META_SIZE, indent + 1,
-                        Long.toString(originalSize));
-            } else {
-                log.add(LogType.MSG_DC_CLEAR_META_SIZE_UNKNOWN, indent + 1);
-            }
-
             metadata = new OpenPgpMetadata(
                     originalFilename,
                     mimeType,
                     literalData.getModificationTime().getTime(),
-                    originalSize == null ? 0 : originalSize);
+                    alreadyWritten);
 
             if (signature != null) {
                 updateProgress(R.string.progress_verifying_signature, 90, 100);
